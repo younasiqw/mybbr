@@ -45,6 +45,7 @@ net.ipv4.tcp_ecn=0
 net.ipv4.tcp_frto=0
 net.ipv4.tcp_mtu_probing=0
 net.ipv4.tcp_rfc1337=0
+net.ipv4.ip_forward=1
 net.ipv4.tcp_sack=1
 net.ipv4.tcp_fack=1
 net.ipv4.tcp_window_scaling=1
