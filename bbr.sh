@@ -109,23 +109,88 @@ EOF
     echo -e "${Info} Fail2Ban 已配置并启动！(端口=$ssh_port, 尝试=$max_retry 次, 周期=$find_time, 封禁=$ban_time)"
 }
 
+add_swap() {
+    echo -e "${Info} 请输入需要添加的 Swap 虚拟内存大小 (单位: MB) [例如输入 2048 代表 2G]:"
+    read -p "大小(MB): " swap_size
+    if ! [[ "$swap_size" =~ ^[0-9]+$ ]]; then
+        echo -e "${Error} 输入有误，请输入正整数！"
+        sleep 2
+        manage_swap
+        return
+    fi
+
+    echo -e "${Info} 正在创建 ${swap_size}MB 的 Swap 文件，这可能需要一点时间，请稍候..."
+    
+    # 如果已经存在旧的swap，先清除避免冲突
+    if grep -q "/swapfile" /etc/fstab || ls -l /swapfile >/dev/null 2>&1; then
+        swapoff /swapfile >/dev/null 2>&1
+        rm -f /swapfile
+        sed -i '/swapfile/d' /etc/fstab
+    fi
+
+    dd if=/dev/zero of=/swapfile bs=1M count=$swap_size status=progress
+    chmod 600 /swapfile
+    mkswap /swapfile
+    swapon /swapfile
+
+    # 写入 /etc/fstab 保证重启生效
+    echo "/swapfile swap swap defaults 0 0" >> /etc/fstab
+    echo -e "${Info} Swap 虚拟内存 (大小: ${swap_size}MB) 创建成功，并且重启后将持续生效！"
+    
+    echo -e "\n按任意键返回上级菜单..."
+    read -n 1 -s -r -p ""
+    manage_swap
+}
+
+clear_swap() {
+    echo -e "${Info} 正在清除 Swap 虚拟内存..."
+    swapoff /swapfile >/dev/null 2>&1
+    rm -f /swapfile
+    sed -i '/swapfile/d' /etc/fstab
+    echo -e "${Info} Swap 虚拟内存已清除！"
+    
+    echo -e "\n按任意键返回上级菜单..."
+    read -n 1 -s -r -p ""
+    manage_swap
+}
+
+manage_swap() {
+    clear
+    echo -e "#############################################################"
+    echo -e "#                  Swap 虚拟内存管理                        #"
+    echo -e "#############################################################"
+    echo -e "${Green_font_prefix}1.${Font_color_suffix} 新增 Swap 虚拟内存"
+    echo -e "${Green_font_prefix}2.${Font_color_suffix} 清除 Swap 虚拟内存"
+    echo -e "${Green_font_prefix}0.${Font_color_suffix} 返回主菜单"
+    echo -e ""
+    read -p "请输入选项 [0-2]: " swap_num
+    case "$swap_num" in
+        1) add_swap ;;
+        2) clear_swap ;;
+        0) menu ;;
+        *) echo -e "${Error} 请输入正确的数字 [0-2]"; sleep 2; manage_swap ;;
+    esac
+}
+
 menu() {
     clear
     echo -e "#############################################################"
-    echo -e "#            Linux 一键安装BBR与Fail2Ban脚本                 #"
+    echo -e "#            Linux 一键安装BBR与Fail2Ban脚本                #"
     echo -e "#############################################################"
     echo -e "${Green_font_prefix}1.${Font_color_suffix} 应用 BBR 与指定网络内核优化参数"
     echo -e "${Green_font_prefix}2.${Font_color_suffix} 安装并自定义配置 Fail2Ban (SSH 防爆破)"
     echo -e "${Green_font_prefix}3.${Font_color_suffix} 一键执行: 应用 BBR + 安装 Fail2Ban"
+    echo -e "${Green_font_prefix}4.${Font_color_suffix} swap虚拟内存"
     echo -e "${Green_font_prefix}0.${Font_color_suffix} 退出脚本"
     echo -e ""
-    read -p "请输入选项 [0-3]: " num
+    read -p "请输入选项 [0-4]: " num
     case "$num" in
         1) apply_bbr_and_sysctl ;;
         2) install_fail2ban ;;
         3) apply_bbr_and_sysctl; install_fail2ban ;;
+        4) manage_swap ;;
         0) exit 0 ;;
-        *) echo -e "${Error} 请输入正确的数字 [0-3]"; sleep 2; menu ;;
+        *) echo -e "${Error} 请输入正确的数字 [0-4]"; sleep 2; menu ;;
     esac
 }
 
