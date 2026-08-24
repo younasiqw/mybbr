@@ -76,9 +76,12 @@ smart_bbr_tuning() {
     read -p "请输入你预期的最大网速上限 (Mbps) [默认: 1000]: " bandwidth
     bandwidth=${bandwidth:-1000}
     
+    # 留存 15% 的宽带冗余，计算实际可用带宽
+    local real_bandwidth=$(( bandwidth * 85 / 100 ))
+    
     # 计算 BDP (Bandwidth-Delay Product)
-    # BDP (bytes) = Bandwidth (Mbps) * 1000000 / 8 * Latency (ms) / 1000 = Bandwidth * Latency * 125
-    local bdp_bytes=$(( bandwidth * latency * 125 ))
+    # BDP (bytes) = 实际可用带宽 (Mbps) * 1000000 / 8 * Latency (ms) / 1000 = 实际可用带宽 * Latency * 125
+    local bdp_bytes=$(( real_bandwidth * latency * 125 ))
     
     # 追求无丢包与稳定性：最大缓冲区设置为 BDP 的 4 倍
     local max_buffer=$(( bdp_bytes * 4 ))
@@ -88,14 +91,21 @@ smart_bbr_tuning() {
         max_buffer=16777216
     fi
     
-    # 设定默认缓冲区为 1 倍 BDP (最低 87380 字节)
-    local default_buffer=$(( bdp_bytes ))
-    if [ "$default_buffer" -lt 87380 ]; then
-        default_buffer=87380
+    # 防止内存溢出：获取系统总物理内存，最高允许占用 10% 作为单路 TCP 极限缓冲区
+    local total_mem_kb=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
+    # 计算内存的 10% 的字节数（1024 / 10 约等于 102，使用该常数避免数值过大引发 Bash 溢出）
+    local max_mem_limit=$(( total_mem_kb * 102 ))
+    if [ "$max_buffer" -gt "$max_mem_limit" ]; then
+        max_buffer=$max_mem_limit
+        echo -e "${Info} 触发内存保护机制，最大缓冲区已限制为系统内存的 10% ($max_buffer Bytes)"
     fi
+    
+    # 设定默认缓冲区，恢复采用系统中间数，避免中间数值过大
+    local rmem_default=16384
+    local wmem_default=87380
 
-    echo -e "${Info} 计算得出的基础 BDP 为: $bdp_bytes Bytes"
-    echo -e "${Info} 动态分配的最大 TCP 缓冲区 (4x BDP) 为: $max_buffer Bytes"
+    echo -e "${Info} 留存 15% 宽带冗余后，计算得出的基础 BDP 为: $bdp_bytes Bytes"
+    echo -e "${Info} 动态分配的最大 TCP 缓冲区 为: $max_buffer Bytes"
 
     local params=(
         "net.ipv4.tcp_no_metrics_save" "net.ipv4.tcp_ecn" "net.ipv4.tcp_frto"
@@ -124,10 +134,10 @@ net.ipv4.tcp_adv_win_scale=1
 net.ipv4.tcp_moderate_rcvbuf=1
 net.core.rmem_max=$max_buffer
 net.core.wmem_max=$max_buffer
-net.ipv4.tcp_rmem=4096 $default_buffer $max_buffer
-net.ipv4.tcp_wmem=4096 $default_buffer $max_buffer
-net.ipv4.udp_rmem_min=8192
-net.ipv4.udp_wmem_min=8192
+net.ipv4.tcp_rmem=4096 $rmem_default $max_buffer
+net.ipv4.tcp_wmem=4096 $wmem_default $max_buffer
+net.ipv4.udp_rmem_min=4096
+net.ipv4.udp_wmem_min=4096
 net.core.default_qdisc=fq
 net.ipv4.tcp_congestion_control=bbr
 EOF
@@ -239,7 +249,7 @@ remove_swap() {
 manage_swap() {
     clear
     echo -e "#############################################################"
-    echo -e "#                  Swap 虚拟内存管理                        #"
+    echo -e "#                 Swap 虚拟内存管理                         #"
     echo -e "#############################################################"
     echo -e "${Green_font_prefix}1.${Font_color_suffix} 新增 Swap 虚拟内存大小 (重启持续生效)"
     echo -e "${Green_font_prefix}2.${Font_color_suffix} 清除 Swap 虚拟内存"
