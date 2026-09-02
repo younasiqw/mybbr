@@ -86,9 +86,9 @@ smart_bbr_tuning() {
     # 追求无丢包与稳定性：最大缓冲区设置为 BDP 的 4 倍
     local max_buffer=$(( bdp_bytes * 4 ))
     
-    # 设定安全底线，防止由于用户输入太小导致连接断流 (最低 16MB)
-    if [ "$max_buffer" -lt 16777216 ]; then
-        max_buffer=16777216
+    # 设定安全底线，防止由于用户输入太小导致连接断流 (最低6MB)
+    if [ "$max_buffer" -lt 6291456 ]; then
+        max_buffer=6291456
     fi
     
     # 防止内存溢出：获取系统总物理内存，最高允许占用 10% 作为单路 TCP 极限缓冲区
