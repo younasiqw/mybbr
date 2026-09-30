@@ -249,7 +249,7 @@ remove_swap() {
 manage_swap() {
     clear
     echo -e "#############################################################"
-    echo -e "#                 Swap 虚拟内存管理                         #"
+    echo -e "#                  Swap 虚拟内存管理                        #"
     echo -e "#############################################################"
     echo -e "${Green_font_prefix}1.${Font_color_suffix} 新增 Swap 虚拟内存大小 (重启持续生效)"
     echo -e "${Green_font_prefix}2.${Font_color_suffix} 清除 Swap 虚拟内存"
@@ -264,6 +264,86 @@ manage_swap() {
     esac
 }
 
+install_bbrv3() {
+    echo -e "${Info} 开始安装 BBRv3 XanMod 内核..."
+
+    local arch=$(uname -m)
+    if [[ "$arch" != "x86_64" ]]; then
+        echo -e "${Error} XanMod 官方源仅支持 x86_64 架构，当前系统架构为: $arch"
+        read -p "按回车键返回主菜单..."
+        return
+    fi
+
+    # 检查 CPU 支持的微架构级别
+    local ld_so=""
+    for p in /usr/lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 /lib/x86_64-linux-gnu/ld-linux-x86-64.so.2 /lib64/ld-linux-x86-64.so.2; do
+        if [ -f "$p" ]; then
+            ld_so="$p"
+            break
+        fi
+    done
+
+    local pkg="linux-xanmod-x64v2"
+    if [ -n "$ld_so" ] && $ld_so --help 2>/dev/null | grep -q "x86-64-v3 (supported"; then
+        pkg="linux-xanmod-x64v3"
+    fi
+    echo -e "${Info} 检测到适配的内核版本包为: $pkg"
+
+    # 安装依赖并添加官方软件源
+    echo -e "${Info} 正在配置 XanMod 官方源与密钥..."
+    apt-get update -y
+    apt-get install -y wget gpg ca-certificates
+    install -d -m 0755 /etc/apt/keyrings
+    wget -qO - https://dl.xanmod.org/archive.key | gpg --dearmor --yes -o /etc/apt/keyrings/xanmod-archive-keyring.gpg
+    echo 'deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org releases main' > /etc/apt/sources.list.d/xanmod-release.list
+    apt-get update -y
+
+    # 安装内核
+    echo -e "${Info} 正在下载并安装 $pkg 内核，请耐心等待..."
+    DEBIAN_FRONTEND=noninteractive apt-get install -y "$pkg"
+    if [ $? -ne 0 ]; then
+        echo -e "${Error} $pkg 安装失败，请检查网络连接或源配置！"
+        read -p "按回车键返回主菜单..."
+        return
+    fi
+
+    # 检查新内核是否已存在于 /boot 中
+    if ! ls /boot/vmlinuz*xanmod* >/dev/null 2>&1; then
+        echo -e "${Error} 未在 /boot 中检测到 XanMod 内核文件，为防止系统损坏，已中止卸载旧内核操作！"
+        read -p "按回车键返回主菜单..."
+        return
+    fi
+
+    # 卸载旧内核（只保留 xanmod）
+    echo -e "${Info} XanMod 内核安装成功，正在清理所有旧内核..."
+    local old_kernels=$(dpkg -l | grep -E '^ii[[:space:]]+linux-(image|modules|headers)' | grep -v 'xanmod' | awk '{print $2}')
+    if [ -n "$old_kernels" ]; then
+        echo -e "${Info} 检测到以下旧内核包，准备清理:"
+        echo "$old_kernels"
+        DEBIAN_FRONTEND=noninteractive apt-get purge -y $old_kernels
+        DEBIAN_FRONTEND=noninteractive apt-get autoremove -y --purge
+    else
+        echo -e "${Info} 未发现需要清理的旧内核。"
+    fi
+
+    # 更新 GRUB 引导
+    update-grub
+
+    # 应用静态 BBR 与网络优化参数至 /etc/sysctl.conf
+    echo -e "${Info} 正在配置 BBRv3 与网络优化参数至 /etc/sysctl.conf..."
+    apply_bbr_and_sysctl
+
+    echo -e "\n${Info} BBRv3 XanMod 内核安装与配置已全部完成！系统必须重启才能加载新内核。"
+    read -p "是否立即重启服务器？[y/N]: " reboot_choice
+    if [[ "$reboot_choice" =~ ^[Yy]$ ]]; then
+        echo -e "${Info} 正在重启服务器..."
+        reboot
+    else
+        echo -e "${Info} 已取消重启，请稍后手动执行 reboot 生效。"
+        read -p "按回车键返回主菜单..."
+    fi
+}
+
 menu() {
     clear
     echo -e "#############################################################"
@@ -275,9 +355,10 @@ menu() {
     echo -e "${Green_font_prefix}4.${Font_color_suffix} 一键执行: 静态 BBR + 安装 Fail2Ban"
     echo -e "${Green_font_prefix}5.${Font_color_suffix} 一键执行: 智能 BBR + 安装 Fail2Ban"
     echo -e "${Green_font_prefix}6.${Font_color_suffix} Swap 虚拟内存管理"
+    echo -e "${Green_font_prefix}7.${Font_color_suffix} 安装 BBRv3 (XanMod 内核并清理旧内核)"
     echo -e "${Green_font_prefix}0.${Font_color_suffix} 退出脚本"
     echo -e ""
-    read -p "请输入选项 [0-6]: " num
+    read -p "请输入选项 [0-7]: " num
     case "$num" in
         1) apply_bbr_and_sysctl ;;
         2) smart_bbr_tuning ;;
@@ -285,8 +366,9 @@ menu() {
         4) apply_bbr_and_sysctl; install_fail2ban ;;
         5) smart_bbr_tuning; install_fail2ban ;;
         6) manage_swap ;;
+        7) install_bbrv3 ;;
         0) exit 0 ;;
-        *) echo -e "${Error} 请输入正确的数字 [0-6]"; sleep 2; menu ;;
+        *) echo -e "${Error} 请输入正确的数字 [0-7]"; sleep 2; menu ;;
     esac
 }
 
