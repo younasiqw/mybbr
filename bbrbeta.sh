@@ -283,9 +283,9 @@ install_bbrv3() {
         fi
     done
 
-    local pkg="linux-xanmod-x64v2"
+    local pkg="linux-xanmod-lts-x64v2"
     if [ -n "$ld_so" ] && $ld_so --help 2>/dev/null | grep -q "x86-64-v3 (supported"; then
-        pkg="linux-xanmod-x64v3"
+        pkg="linux-xanmod-lts-x64v3"
     fi
     echo -e "${Info} 检测到适配的内核版本包为: $pkg"
 
