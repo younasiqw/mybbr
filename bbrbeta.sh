@@ -149,7 +149,7 @@ EOF
 }
 
 check_bbr_status() {
-    if lsmod | grep -q bbr; then
+    if [[ "$(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null)" == *"bbr"* ]] || lsmod | grep -q bbr; then
         echo -e "${Info} BBR 拥塞控制算法已成功启动！"
     else
         echo -e "${Error} 未检测到 BBR 模块。如果是最新版 Ubuntu，BBR 已默认内置，属于正常现象。"
