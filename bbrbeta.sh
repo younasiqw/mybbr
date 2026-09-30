@@ -295,7 +295,7 @@ install_bbrv3() {
     apt-get install -y wget gpg ca-certificates
     install -d -m 0755 /etc/apt/keyrings
     wget -qO - https://dl.xanmod.org/archive.key | gpg --dearmor --yes -o /etc/apt/keyrings/xanmod-archive-keyring.gpg
-    echo 'deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org releases main' > /etc/apt/sources.list.d/xanmod-release.list
+    echo 'deb [signed-by=/etc/apt/keyrings/xanmod-archive-keyring.gpg] http://deb.xanmod.org noble main' > /etc/apt/sources.list.d/xanmod-release.list
     apt-get update -y
 
     # 安装内核
