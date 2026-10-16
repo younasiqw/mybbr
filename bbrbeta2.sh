@@ -383,17 +383,17 @@ iperf3_benchmark() {
         apt-get update -y && apt-get install -y "${need_install[@]}"
     fi
 
-    # 来源 iperf3serverlist.net 的核心常用服务器清单
+    # 权威免费 iperf3 服务器池
     # 格式: Host|StartPort|EndPort|CountryCode|CountryName|CityName
     local server_pool=(
         "fra.speedtest.clouvider.net|5201|5209|DE|Germany|Frankfurt"
         "speedtest.fra1.de.leaseweb.net|5201|5210|DE|Germany|Frankfurt"
         "speedtest.ber1.de.leaseweb.net|5201|5210|DE|Germany|Berlin"
         "speedtest.cbg.de.leaseweb.net|5201|5210|DE|Germany|Coburg"
-        "par.speedtest.clouvider.net|5201|5209|FR|France|Paris"
-        "ping.online.net|5201|5209|FR|France|Paris"
         "ams.speedtest.clouvider.net|5201|5209|NL|Netherlands|Amsterdam"
         "speedtest.ams1.nl.leaseweb.net|5201|5210|NL|Netherlands|Amsterdam"
+        "par.speedtest.clouvider.net|5201|5209|FR|France|Paris"
+        "ping.online.net|5201|5209|FR|France|Paris"
         "lon.speedtest.clouvider.net|5201|5209|GB|United Kingdom|London"
         "speedtest.lon1.gb.leaseweb.net|5201|5210|GB|United Kingdom|London"
         "speedtest.waw1.pl.leaseweb.net|5201|5210|PL|Poland|Warsaw"
@@ -416,7 +416,7 @@ iperf3_benchmark() {
     if [[ -n "$local_country" ]]; then
         echo -e "${Info} 本机定位: ${Green_font_prefix}${local_country_name:-未知} - ${local_city:-未知} (${local_country})${Font_color_suffix}"
     else
-        echo -e "${Info} 未能自动获取准确位置，将使用延迟测速进行自动匹配。"
+        echo -e "${Info} 未能自动获取准确位置，将直接通过全网延迟测速排序。"
     fi
 
     # 测试参数设置
@@ -445,16 +445,13 @@ iperf3_benchmark() {
 
     echo -e ""
     echo -e "--- 选择 iperf3 服务器 ---"
-    echo -e "1. 自动选择（优先匹配本土/同城，若无则挑选最低延迟节点）"
+    echo -e "1. 自动智能选择（优先匹配本土/同城，若全端口繁忙则自动顺延切换下一个最优节点）"
     echo -e "2. 手动在预置服务器列表中选择"
     echo -e "3. 手动输入自定义 iperf3 服务器地址与起始端口"
     read -p "请输入选择 [1-3, 默认 1]: " server_mode
     server_mode=${server_mode:-1}
 
-    local target_host=""
-    local start_port=5201
-    local end_port=5209
-    local target_location=""
+    local target_servers=()
 
     if [ "$server_mode" == "2" ]; then
         echo -e "\n可选服务器列表："
@@ -466,219 +463,241 @@ iperf3_benchmark() {
         done
         read -p "请选择服务器序号 [1-${#server_pool[@]}]: " s_idx
         if [[ "$s_idx" =~ ^[0-9]+$ ]] && [ "$s_idx" -ge 1 ] && [ "$s_idx" -le "${#server_pool[@]}" ]; then
-            local selected="${server_pool[$((s_idx - 1))]}"
-            IFS='|' read -r target_host start_port end_port _ cn ct <<< "$selected"
-            target_location="$cn - $ct"
+            target_servers+=("${server_pool[$((s_idx - 1))]}")
         else
             echo -e "${Error} 输入有误，默认切换至自动选择！"
             server_mode=1
         fi
     elif [ "$server_mode" == "3" ]; then
-        read -p "请输入 iperf3 服务器域名或 IP: " target_host
-        read -p "请输入起始端口 [默认: 5201]: " start_port
-        start_port=${start_port:-5201}
-        read -p "请输入最大后备尝试端口 [默认: $((start_port + 8))]: " end_port
-        end_port=${end_port:-$((start_port + 8))}
-        target_location="自定义服务器"
+        read -p "请输入 iperf3 服务器域名或 IP: " custom_host
+        read -p "请输入起始端口 [默认: 5201]: " custom_sp
+        custom_sp=${custom_sp:-5201}
+        read -p "请输入最大后备尝试端口 [默认: $((custom_sp + 8))]: " custom_ep
+        custom_ep=${custom_ep:-$((custom_sp + 8))}
+        target_servers+=("${custom_host}|${custom_sp}|${custom_ep}|CUSTOM|自定义|服务器")
     fi
 
-    # 自动择优选择
+    # 自动模式：构建有序候选服务器队列
     if [ "$server_mode" == "1" ]; then
-        echo -e "${Info} 正在自动分析并寻找最优服务器..."
-        local candidate_list=()
+        echo -e "${Info} 正在自动对可用节点进行延迟探测与优先级排序..."
+        local city_matches=()
+        local country_matches=()
+        local other_matches=()
 
-        # 1. 优先尝试匹配同国家、同城市 (例如德国法兰克福)
-        if [[ -n "$local_country" && -n "$local_city" ]]; then
-            for s in "${server_pool[@]}"; do
-                IFS='|' read -r h sp ep cc cn ct <<< "$s"
-                if [[ "${cc,,}" == "${local_country,,}" && "${ct,,}" =~ "${local_city,,}" ]]; then
-                    candidate_list+=("$s")
-                fi
-            done
-        fi
-
-        # 2. 若同城无节点，则筛选同国家所有节点
-        if [ ${#candidate_list[@]} -eq 0 ] && [[ -n "$local_country" ]]; then
-            for s in "${server_pool[@]}"; do
-                IFS='|' read -r h sp ep cc cn ct <<< "$s"
-                if [[ "${cc,,}" == "${local_country,,}" ]]; then
-                    candidate_list+=("$s")
-                fi
-            done
-        fi
-
-        # 3. 若同国无节点，取全部公共池测延迟
-        if [ ${#candidate_list[@]} -eq 0 ]; then
-            candidate_list=("${server_pool[@]}")
-        fi
-
-        echo -e "${Info} 正在对候选节点进行延迟检测与筛选..."
-        local best_server=""
-        local min_latency=999999
-
-        for s in "${candidate_list[@]}"; do
+        for s in "${server_pool[@]}"; do
             IFS='|' read -r h sp ep cc cn ct <<< "$s"
-            # ping 2 次，单次超时 1 秒
             local ping_res
             ping_res=$(ping -c 2 -W 1 "$h" 2>/dev/null | awk -F'/' 'END{print $5}')
+            local lat_int=9999
             if [[ -n "$ping_res" ]]; then
-                local int_lat=${ping_res%.*}
-                [[ -z "$int_lat" ]] && int_lat=9999
-                echo -e "   - 节点: ${cn} - ${ct} ($h) 延迟: ${ping_res} ms"
-                if [ "$int_lat" -lt "$min_latency" ]; then
-                    min_latency=$int_lat
-                    best_server="$s"
+                lat_int=${ping_res%.*}
+                [[ -z "$lat_int" ]] && lat_int=9999
+                echo -e "   - 探测节点: ${cn} - ${ct} ($h) 延迟: ${ping_res} ms"
+            else
+                echo -e "   - 探测节点: ${cn} - ${ct} ($h) Ping 超时 (作为备用候选)"
+            fi
+
+            # 存储格式: latency_int|full_record
+            if [[ -n "$local_country" && "${cc,,}" == "${local_country,,}" ]]; then
+                if [[ -n "$local_city" && "${ct,,}" =~ "${local_city,,}" ]]; then
+                    city_matches+=("${lat_int}|${s}")
+                else
+                    country_matches+=("${lat_int}|${s}")
                 fi
             else
-                echo -e "   - 节点: ${cn} - ${ct} ($h) Ping 超时"
+                other_matches+=("${lat_int}|${s}")
             fi
         done
 
-        if [[ -z "$best_server" ]]; then
-            # 若全部禁 ping，降级选用候选列表首个
-            best_server="${candidate_list[0]}"
+        # 排序函数：按延迟数字升序
+        sort_by_latency() {
+            for item in "$@"; do
+                echo "$item"
+            done | sort -t'|' -k1 -n | cut -d'|' -f2-
+        }
+
+        # 依次加载同城优先、同国次之、其他临近兜底
+        if [ ${#city_matches[@]} -gt 0 ]; then
+            while IFS= read -r line; do [[ -n "$line" ]] && target_servers+=("$line"); done < <(sort_by_latency "${city_matches[@]}")
+        fi
+        if [ ${#country_matches[@]} -gt 0 ]; then
+            while IFS= read -r line; do [[ -n "$line" ]] && target_servers+=("$line"); done < <(sort_by_latency "${country_matches[@]}")
+        fi
+        if [ ${#other_matches[@]} -gt 0 ]; then
+            while IFS= read -r line; do [[ -n "$line" ]] && target_servers+=("$line"); done < <(sort_by_latency "${other_matches[@]}")
         fi
 
-        IFS='|' read -r target_host start_port end_port _ cn ct <<< "$best_server"
-        target_location="$cn - $ct"
-        echo -e "${Info} 自动锁定最佳节点: ${Green_font_prefix}${target_host}${Font_color_suffix} (${target_location})"
+        echo -e "${Info} 已自动优选出 ${Green_font_prefix}${#target_servers[@]}${Font_color_suffix} 个备用打流服务器队列。"
     fi
 
-    # 执行带有端口占用自动递增重试的打流函数
-    # 返回 json 输出字符串；遇到 busy 或 connection refused 自动换后一位端口
-    run_iperf_with_auto_port() {
-        local direction="$1" # up / down
-        local proto="$2"     # tcp / udp
-        local s_port="$start_port"
-        local e_port="$end_port"
-        [[ $e_port -lt $s_port ]] && e_port=$((s_port + 8))
+    local tmp_json="/tmp/iperf3_res_$$.json"
+    local active_host=""
+    local active_port=""
+    local active_location=""
+    local up_bytes=0
+    local up_retrans=0
+    local up_bps=0
+    local down_bytes=0
+    local down_retrans=0
+    local down_bps=0
+    local udp_up_bytes=0
+    local udp_up_loss="0%"
+    local udp_down_bytes=0
+    local udp_down_loss="0%"
 
-        local p=$s_port
-        while [ "$p" -le "$e_port" ]; do
-            echo -e "${Info} 正在使用端口 [${Green_font_prefix}${p}${Font_color_suffix}] 尝试连接打流..."
-            local cmd_args=("-c" "$target_host" "-p" "$p" "-t" "$test_duration" "-J")
-            if [ "$direction" == "down" ]; then
-                cmd_args+=("-R")
+    # 尝试在特定服务器上运行打流 (包含端口递增机制)
+    # 参数: $1: host, $2: start_port, $3: end_port, $4: direction (up/down), $5: proto (tcp/udp), $6: locked_port (可选)
+    execute_stream() {
+        local h="$1"
+        local sp="$2"
+        local ep="$3"
+        local dir="$4"
+        local proto="$5"
+        local forced_port="$6"
+
+        [[ -z "$ep" || "$ep" -lt "$sp" ]] && ep=$((sp + 8))
+
+        local p_list=()
+        if [[ -n "$forced_port" && "$forced_port" =~ ^[0-9]+$ ]]; then
+            p_list=("$forced_port")
+        else
+            for ((p=sp; p<=ep; p++)); do
+                p_list+=("$p")
+            done
+        fi
+
+        for curr_port in "${p_list[@]}"; do
+            echo -e "${Info} 正在向 [${h}:${Green_font_prefix}${curr_port}${Font_color_suffix}] 发起 ${proto^^} ${dir^^} 打流..."
+            rm -f "$tmp_json"
+
+            local cmd=("iperf3" "-c" "$h" "-p" "$curr_port" "-t" "$test_duration" "-J")
+            if [ "$dir" == "down" ]; then
+                cmd+=("-R")
             fi
             if [ "$proto" == "udp" ]; then
-                cmd_args+=("-u" "-b" "0")
+                cmd+=("-u" "-b" "0")
             fi
             if [ "$threads" -gt 1 ]; then
-                cmd_args+=("-P" "$threads")
+                cmd+=("-P" "$threads")
             fi
 
-            local out
-            out=$(iperf3 "${cmd_args[@]}" 2>&1)
+            # 执行打流并将标准输出与错误完全隔离重定向至临时文件，保证终端不被吞噬
+            "${cmd[@]}" > "$tmp_json" 2>&1
 
-            # 检查是否有端口繁忙或连接拒绝等错误
-            if echo "$out" | grep -qiE "busy|try again|refused|unable to connect|interrupt|broken pipe"; then
-                echo -e "${Error} 端口 $p 被他人测试占用或不可用，正在自动切换至后一位端口 $((p + 1)) 重新尝试..."
-                p=$((p + 1))
-                sleep 1
-                continue
-            fi
-
-            # 检查 json 中是否包含正常的 end 结果块
-            if echo "$out" | jq -e '.end' >/dev/null 2>&1; then
-                # 打流成功，同步已连接端口供后续参考
-                start_port=$p
-                echo "$out"
+            # 检测是否成功产生合法的 .end 报告
+            if jq -e '.end' "$tmp_json" >/dev/null 2>&1; then
+                export LAST_ACTIVE_PORT="$curr_port"
                 return 0
-            else
-                local err_detail
-                err_detail=$(echo "$out" | jq -r '.error // empty' 2>/dev/null)
-                [[ -z "$err_detail" ]] && err_detail=$(echo "$out" | head -n 1)
-                echo -e "${Error} 端口 $p 测试未响应 (${err_detail})，尝试递增至端口 $((p + 1))..."
-                p=$((p + 1))
-                sleep 1
             fi
+
+            # 抓取错误特征
+            local err_msg
+            err_msg=$(jq -r '.error // empty' "$tmp_json" 2>/dev/null)
+            [[ -z "$err_msg" ]] && err_msg=$(head -n 2 "$tmp_json" | tr '\n' ' ')
+
+            if echo "$err_msg" | grep -qiE "busy|try again|unable to connect|refused|interrupt|broken pipe"; then
+                echo -e "${Error} 端口 $curr_port 繁忙或被他人占用 (${err_msg})，自动尝试后一位端口..."
+            else
+                echo -e "${Error} 端口 $curr_port 连接异常 (${err_msg})，尝试后一位端口..."
+            fi
+            sleep 1
         done
 
-        echo -e "${Error} 服务器所有候选端口 ($s_port ~ $e_port) 均被占用或无法连通！"
         return 1
     }
 
     echo -e "\n==================== 开始执行打流测试 ===================="
-    echo -e "${Info} 目标主机: $target_host ($target_location)"
-    echo -e "${Info} 测试协议: TCP (线程数: $threads) | 测试时长: ${test_duration}s"
-    echo -e "=========================================================="
+    local test_passed=0
 
-    # 1. TCP 上传测试
-    echo -e "\n${Info} [1/2] 正在执行 TCP 【上传】打流测试..."
-    local tcp_up_json
-    tcp_up_json=$(run_iperf_with_auto_port "up" "tcp")
-    if [ $? -ne 0 ] || [[ -z "$tcp_up_json" ]]; then
-        echo -e "${Error} TCP 上传测试失败！"
+    # 服务器级故障转移主循环
+    for srv in "${target_servers[@]}"; do
+        IFS='|' read -r s_host s_sp s_ep _ s_cn s_ct <<< "$srv"
+        echo -e "\n${Info} 当前选定服务器: ${Green_font_prefix}${s_host}${Font_color_suffix} (${s_cn} - ${s_ct})"
+
+        # 1. 尝试 TCP 上传打流
+        echo -e "${Info} [1/2] 正在进行 TCP 【上传】打流测试..."
+        if ! execute_stream "$s_host" "$s_sp" "$s_ep" "up" "tcp"; then
+            echo -e "${Error} 服务器 [${s_host}] 所有测试端口均繁忙或无法连接，正在自动切换至下一个最优服务器..."
+            continue
+        fi
+
+        local current_succ_port="$LAST_ACTIVE_PORT"
+
+        # 解析上传数据
+        up_bytes=$(jq -r '(.end.sum_sent.bytes // .end.sum.bytes // 0)' "$tmp_json" 2>/dev/null)
+        up_retrans=$(jq -r '(.end.sum_sent.retransmits // .end.sum.retransmits // 0)' "$tmp_json" 2>/dev/null)
+        up_bps=$(jq -r '(.end.sum_sent.bits_per_second // .end.sum.bits_per_second // 0)' "$tmp_json" 2>/dev/null)
+        [[ -z "$up_retrans" || "$up_retrans" == "null" ]] && up_retrans=0
+
+        # 2. 尝试 TCP 下载打流 (Reverse 模式)
+        echo -e "${Info} [2/2] 正在进行 TCP 【下载】打流测试 (Reverse 模式)..."
+        # 优先使用刚刚上传成功的端口，若遇突发繁忙则在全端口段顺延
+        if ! execute_stream "$s_host" "$s_sp" "$s_ep" "down" "tcp" "$current_succ_port"; then
+            echo -e "${Error} 下载端口被占用，尝试在该服务器全范围端口重新握手..."
+            if ! execute_stream "$s_host" "$s_sp" "$s_ep" "down" "tcp"; then
+                echo -e "${Error} 服务器 [${s_host}] 下载阶段异常，自动切换至下一个最优服务器重新开始..."
+                continue
+            fi
+        fi
+
+        # 解析下载数据
+        down_bytes=$(jq -r '(.end.sum_received.bytes // .end.sum.bytes // 0)' "$tmp_json" 2>/dev/null)
+        down_retrans=$(jq -r '(.end.sum_sent.retransmits // .end.sum.retransmits // 0)' "$tmp_json" 2>/dev/null)
+        down_bps=$(jq -r '(.end.sum_received.bits_per_second // .end.sum.bits_per_second // 0)' "$tmp_json" 2>/dev/null)
+        [[ -z "$down_retrans" || "$down_retrans" == "null" ]] && down_retrans=0
+
+        # 3. 可选 UDP 测试
+        if [ "$test_udp" -eq 1 ]; then
+            echo -e "\n${Info} 正在进行 UDP 【上传】打流测试..."
+            if execute_stream "$s_host" "$s_sp" "$s_ep" "up" "udp" "$current_succ_port"; then
+                udp_up_bytes=$(jq -r '(.end.sum.bytes // 0)' "$tmp_json" 2>/dev/null)
+                local loss_val
+                loss_val=$(jq -r '(.end.sum.lost_percent // 0)' "$tmp_json" 2>/dev/null)
+                udp_up_loss=$(awk -v l="$loss_val" 'BEGIN{printf "%.2f%%", l}')
+            fi
+
+            echo -e "${Info} 正在进行 UDP 【下载】打流测试..."
+            if execute_stream "$s_host" "$s_sp" "$s_ep" "down" "udp" "$current_succ_port"; then
+                udp_down_bytes=$(jq -r '(.end.sum.bytes // 0)' "$tmp_json" 2>/dev/null)
+                local loss_val2
+                loss_val2=$(jq -r '(.end.sum.lost_percent // 0)' "$tmp_json" 2>/dev/null)
+                udp_down_loss=$(awk -v l="$loss_val2" 'BEGIN{printf "%.2f%%", l}')
+            fi
+        fi
+
+        # 测试全部成功，记录节点信息并跳出
+        active_host="$s_host"
+        active_port="$current_succ_port"
+        active_location="${s_cn} - ${s_ct}"
+        test_passed=1
+        break
+    done
+
+    rm -f "$tmp_json"
+
+    if [ "$test_passed" -ne 1 ]; then
+        echo -e "\n${Error} 所有候选服务器均不可用或被他人占用，测试中止！"
         read -p "按回车键返回主菜单..."
         return
     fi
 
-    local up_bytes
-    up_bytes=$(echo "$tcp_up_json" | jq -r '.end.sum_sent.bytes // .end.sum.bytes // 0' 2>/dev/null)
-    local up_retrans
-    up_retrans=$(echo "$tcp_up_json" | jq -r '.end.sum_sent.retransmits // 0' 2>/dev/null)
-    local up_bps
-    up_bps=$(echo "$tcp_up_json" | jq -r '.end.sum_sent.bits_per_second // .end.sum.bits_per_second // 0' 2>/dev/null)
+    # 计算流量数值转换 (GB 与 Mbps)
+    [[ -z "$up_bytes" || "$up_bytes" == "null" ]] && up_bytes=0
+    [[ -z "$down_bytes" || "$down_bytes" == "null" ]] && down_bytes=0
+    [[ -z "$up_bps" || "$up_bps" == "null" ]] && up_bps=0
+    [[ -z "$down_bps" || "$down_bps" == "null" ]] && down_bps=0
 
     local up_gb=$(awk -v b="$up_bytes" 'BEGIN{printf "%.4f", b / 1073741824}')
     local up_mbps=$(awk -v b="$up_bps" 'BEGIN{printf "%.2f", b / 1000000}')
-
-    # 2. TCP 下载测试 (Reverse 模式)
-    echo -e "\n${Info} [2/2] 正在执行 TCP 【下载】打流测试 (Reverse 模式)..."
-    local tcp_down_json
-    tcp_down_json=$(run_iperf_with_auto_port "down" "tcp")
-    if [ $? -ne 0 ] || [[ -z "$tcp_down_json" ]]; then
-        echo -e "${Error} TCP 下载测试失败！"
-        read -p "按回车键返回主菜单..."
-        return
-    fi
-
-    local down_bytes
-    down_bytes=$(echo "$tcp_down_json" | jq -r '.end.sum_received.bytes // .end.sum.bytes // 0' 2>/dev/null)
-    # 反向模式下，服务端为发送方，重传记录在 sum_sent 中
-    local down_retrans
-    down_retrans=$(echo "$tcp_down_json" | jq -r '.end.sum_sent.retransmits // 0' 2>/dev/null)
-    local down_bps
-    down_bps=$(echo "$tcp_down_json" | jq -r '.end.sum_received.bits_per_second // .end.sum.bits_per_second // 0' 2>/dev/null)
-
     local down_gb=$(awk -v b="$down_bytes" 'BEGIN{printf "%.4f", b / 1073741824}')
     local down_mbps=$(awk -v b="$down_bps" 'BEGIN{printf "%.2f", b / 1000000}')
-
-    # 3. 可选 UDP 打流测试
-    local udp_up_gb="-"
-    local udp_up_loss="-"
-    local udp_down_gb="-"
-    local udp_down_loss="-"
-
-    if [ "$test_udp" -eq 1 ]; then
-        echo -e "\n================== 开始执行 UDP 打流测试 ================"
-        echo -e "${Info} 正在执行 UDP 【上传】测试..."
-        local udp_up_json
-        udp_up_json=$(run_iperf_with_auto_port "up" "udp")
-        if [[ -n "$udp_up_json" ]]; then
-            local u_bytes=$(echo "$udp_up_json" | jq -r '.end.sum.bytes // 0' 2>/dev/null)
-            local u_loss=$(echo "$udp_up_json" | jq -r '.end.sum.lost_percent // 0' 2>/dev/null)
-            udp_up_gb=$(awk -v b="$u_bytes" 'BEGIN{printf "%.4f", b / 1073741824}')
-            udp_up_loss=$(printf "%.2f%%" "$u_loss")
-        fi
-
-        echo -e "\n${Info} 正在执行 UDP 【下载】测试..."
-        local udp_down_json
-        udp_down_json=$(run_iperf_with_auto_port "down" "udp")
-        if [[ -n "$udp_down_json" ]]; then
-            local ud_bytes=$(echo "$udp_down_json" | jq -r '.end.sum.bytes // 0' 2>/dev/null)
-            local ud_loss=$(echo "$udp_down_json" | jq -r '.end.sum.lost_percent // 0' 2>/dev/null)
-            udp_down_gb=$(awk -v b="$ud_bytes" 'BEGIN{printf "%.4f", b / 1073741824}')
-            udp_down_loss=$(printf "%.2f%%" "$ud_loss")
-        fi
-    fi
 
     # 展示测试报告
     echo -e "\n#############################################################"
     echo -e "#                  iperf3 打流测试报告统计                  #"
     echo -e "#############################################################"
-    echo -e " 目标节点       : ${Green_font_prefix}${target_host}${Font_color_suffix} (${target_location})"
-    echo -e " 成功通讯端口   : ${Green_font_prefix}${start_port}${Font_color_suffix}"
+    echo -e " 目标节点       : ${Green_font_prefix}${active_host}${Font_color_suffix} (${active_location})"
+    echo -e " 成功通讯端口   : ${Green_font_prefix}${active_port}${Font_color_suffix}"
     echo -e " 测试模式       : TCP $([ "$threads" -gt 1 ] && echo "8 线程" || echo "单线程") | 时长: ${test_duration}s"
     echo -e "-------------------------------------------------------------"
     echo -e " 【上传测试结果】 (Client -> Server):"
@@ -692,6 +711,8 @@ iperf3_benchmark() {
     echo -e "   - 平均下载速度 : ${Green_font_prefix}${down_mbps} Mbps${Font_color_suffix}"
     
     if [ "$test_udp" -eq 1 ]; then
+        local udp_up_gb=$(awk -v b="$udp_up_bytes" 'BEGIN{printf "%.4f", b / 1073741824}')
+        local udp_down_gb=$(awk -v b="$udp_down_bytes" 'BEGIN{printf "%.4f", b / 1073741824}')
         echo -e "-------------------------------------------------------------"
         echo -e " 【UDP 打流结果】:"
         echo -e "   - UDP 上传流量 : ${udp_up_gb} GB | 丢包率: ${udp_up_loss}"
