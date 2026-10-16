@@ -388,8 +388,7 @@ iperf3_benchmark() {
     local server_pool=(
         "fra.speedtest.clouvider.net|5201|5209|DE|Germany|Frankfurt"
         "speedtest.fra1.de.leaseweb.net|5201|5210|DE|Germany|Frankfurt"
-        "speedtest.ber1.de.leaseweb.net|5201|5210|DE|Germany|Berlin"
-        "speedtest.cbg.de.leaseweb.net|5201|5210|DE|Germany|Coburg"
+        "a209.speedtest.wobcom.de|5201|5201|DE|Germany|Berlin"
         "ams.speedtest.clouvider.net|5201|5209|NL|Netherlands|Amsterdam"
         "speedtest.ams1.nl.leaseweb.net|5201|5210|NL|Netherlands|Amsterdam"
         "par.speedtest.clouvider.net|5201|5209|FR|France|Paris"
@@ -402,6 +401,7 @@ iperf3_benchmark() {
         "speedtest.lax12.us.leaseweb.net|5201|5209|US|United States|Los Angeles"
         "nyc.speedtest.clouvider.net|5201|5209|US|United States|New York"
         "dal.speedtest.clouvider.net|5201|5209|US|United States|Dallas"
+        "speedtest.masnet.ec|5201|5209|EC|Ecuador|Santa Ana"
         "akl.linetest.nz|5301|5309|NZ|New Zealand|Auckland"
         "speedtest.tyo11.jp.leaseweb.net|5201|5210|JP|Japan|Tokyo"
         "sgp.proof.ovh.net|5201|5209|SG|Singapore|Singapore"
