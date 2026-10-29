@@ -281,6 +281,11 @@ manage_swap() {
 }
 
 install_bbrv3() {
+    if [[ "$(uname -r)" == *"xanmod"* ]] || ls /boot/vmlinuz*xanmod* >/dev/null 2>&1; then
+        echo -e "${Info} 检测到系统已安装 XanMod 内核，已完成内核安装！"
+        exit 0
+    fi
+
     echo -e "${Info} 开始安装 BBRv3 XanMod 内核..."
 
     local arch=$(uname -m)
@@ -700,9 +705,9 @@ iperf3_benchmark() {
     echo -e "\n#############################################################"
     echo -e "#                  iperf3 打流测试报告统计                  #"
     echo -e "#############################################################"
-    echo -e " 目标节点       : ${Green_font_prefix}${active_host}${Font_color_suffix} (${active_location})"
-    echo -e " 成功通讯端口   : ${Green_font_prefix}${active_port}${Font_color_suffix}"
-    echo -e " 测试模式       : TCP $([ "$threads" -gt 1 ] && echo "8 线程" || echo "单线程") | 时长: ${test_duration}s"
+    echo -e " 目标节点        : ${Green_font_prefix}${active_host}${Font_color_suffix} (${active_location})"
+    echo -e " 成功通讯端口    : ${Green_font_prefix}${active_port}${Font_color_suffix}"
+    echo -e " 测试模式        : TCP $([ "$threads" -gt 1 ] && echo "8 线程" || echo "单线程") | 时长: ${test_duration}s"
     echo -e "-------------------------------------------------------------"
     echo -e " 【上传测试结果】 (Client -> Server):"
     echo -e "   - 消耗上传流量 : ${Green_font_prefix}${up_gb} GB${Font_color_suffix} (${up_bytes} Bytes)"
